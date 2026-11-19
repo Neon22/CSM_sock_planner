@@ -1,0 +1,4 @@
+name = "CSM Sock Planner"
+
+[files]
+"sock_math.py" = "./sock_math.py"

@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSM Sock Planner</title>
+    <meta
+      name="description"
+      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size bench chart powered by PyScript MicroPython."
+    />
+    <meta property="og:title" content="CSM Sock Planner" />
+    <meta
+      property="og:description"
+      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size bench chart powered by PyScript MicroPython."
+    />
+    <meta property="og:type" content="website" />
+
+    <!-- Typography: Noto Serif (Display), Inter (UI/Body & Tabular Numerals), Noto Sans Mono (Fixed-Width Bench Sheet) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Mono:wght@400;500;600&family=Noto+Serif:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- PyScript 2026.7.3 Core Assets (MicroPython Runtime) -->
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
+
+    <!-- Standalone Stylesheet -->
+    <link rel="stylesheet" href="csm_styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="#top" class="brand-mark">CSM Sock Planner</a>
+
+      <nav class="topnav" aria-label="Primary sections">
+        <a href="#visualizer" class="nav-link">Visualizer</a>
+        <a href="#instructions" class="nav-link">Instructions</a>
+        <a href="#sizing-chart" class="nav-link">Sizing Chart</a>
+        <a href="#exports" class="nav-link">Exports</a>
+      </nav>
+
+      <div class="topbar-actions">
+        <button type="button" id="btn-print" class="btn-primary">Print Bench Sheet</button>
+      </div>
+    </header>
+
+    <div id="top" class="workspace">
+      <!-- Left Parameter Deck -->
+      <aside class="control-deck" aria-label="Pattern and swatch parameters">
+        <div class="deck-header">
+          <h1 class="deck-title">Pattern Parameters</h1>
+          <div class="segmented" role="group" aria-label="Measurement units">
+            <button type="button" class="seg-btn unit-btn is-active" data-unit="metric">Metric (cm)</button>
+            <button type="button" class="seg-btn unit-btn" data-unit="imperial">Imperial (in)</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <span class="field-label">Presets</span>
+          <div class="preset-bar" role="group" aria-label="Pattern presets">
+            <button type="button" id="preset-60" class="btn-ghost">60-Slot Plain</button>
+            <button type="button" id="preset-72" class="btn-ghost">72-Slot Colourwork</button>
+            <button type="button" id="btn-reset" class="btn-ghost">Reset</button>
+          </div>
+        </div>
+
+        <section class="control-section">
+          <h2 class="section-heading">01. Cylinder &amp; Ribber</h2>
+
+          <div class="field-group">
+            <label for="cylinder-needles" class="field-label">
+              Main Cylinder Needles <span class="muted-inline">(even, 12–200)</span>
+            </label>
+            <div class="chip-grid" role="group" aria-label="Cylinder presets and custom">
+              <button type="button" class="seg-btn cyl-btn" data-cyl="48">48</button>
+              <button type="button" class="seg-btn cyl-btn" data-cyl="54">54</button>
+              <button type="button" class="seg-btn cyl-btn is-active" data-cyl="60">60</button>
+              <button type="button" class="seg-btn cyl-btn" data-cyl="64">64</button>
+              <button type="button" class="seg-btn cyl-btn" data-cyl="72">72</button>
+              <button type="button" class="seg-btn cyl-btn" data-cyl="84">84</button>
+              <button type="button" id="cyl-custom-btn" class="seg-btn cyl-custom-btn">Custom</button>
+            </div>
+            <div class="input-row">
+              <input
+                id="cylinder-needles"
+                class="num-input param-input"
+                type="number"
+                min="12"
+                max="200"
+                step="1"
+                value="60"
+                aria-label="Custom main cylinder needle count"
+              />
+              <span class="input-unit">needles</span>
+            </div>
+            <p id="cylinder-warning" class="field-note is-hidden"></p>
+          </div>
+
+          <div class="field-group">
+            <span class="field-label">Cuff Ribber Setup</span>
+            <div class="segmented segmented-4" role="group" aria-label="Ribber pattern">
+              <button type="button" class="seg-btn rib-btn is-active" data-rib="1x1">1×1</button>
+              <button type="button" class="seg-btn rib-btn" data-rib="2x2">2×2</button>
+              <button type="button" class="seg-btn rib-btn" data-rib="3x1">3×1</button>
+              <button type="button" class="seg-btn rib-btn" data-rib="plain">Mock</button>
+            </div>
+            <div id="ribber-spec" class="ribber-spec-card" aria-live="polite">
+              <div class="ribber-spec-head">
+                <span class="ribber-spec-label">Required Ribber</span>
+                <strong id="ribber-slots-headline" class="ribber-spec-value">30 slots min</strong>
+              </div>
+              <p id="ribber-slots-detail" class="ribber-spec-detail">
+                30 ribber needles engaged (every 2nd cyl slot)
+              </p>
+            </div>
+            <p id="ribber-warning" class="field-note is-hidden"></p>
+          </div>
+        </section>
+
+        <section class="control-section">
+          <h2 class="section-heading">02. Tension Swatch</h2>
+          <p class="section-help">Measure any window size or full flat tube width × 2.</p>
+
+          <div class="two-col-inputs">
+            <div class="field-group">
+              <label for="swatch-stitches" class="field-label">Stitches Counted</label>
+              <div class="input-row">
+                <input
+                  id="swatch-stitches"
+                  class="num-input param-input"
+                  type="number"
+                  min="4"
+                  max="200"
+                  step="0.5"
+                  value="15.0"
+                />
+                <span class="input-unit">sts</span>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="swatch-width" class="field-label">Measured Width</label>
+              <div class="input-row">
+                <input
+                  id="swatch-width"
+                  class="num-input param-input"
+                  type="number"
+                  min="0.5"
+                  max="50"
+                  step="0.1"
+                  value="5.0"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col-inputs">
+            <div class="field-group">
+              <label for="swatch-rows" class="field-label">Plain Rows Counted</label>
+              <div class="input-row">
+                <input
+                  id="swatch-rows"
+                  class="num-input param-input"
+                  type="number"
+                  min="4"
+                  max="200"
+                  step="0.5"
+                  value="21.0"
+                />
+                <span class="input-unit">rows</span>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="swatch-height" class="field-label">Measured Height</label>
+              <div class="input-row">
+                <input
+                  id="swatch-height"
+                  class="num-input param-input"
+                  type="number"
+                  min="0.5"
+                  max="50"
+                  step="0.1"
+                  value="5.0"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="checkbox-tip-row">
+              <label class="checkbox-row" for="use-colorwork">
+                <input id="use-colorwork" class="param-input" type="checkbox" />
+                <span>Use separate stranded colourwork leg gauge</span>
+              </label>
+              <span class="tip-anchor">
+                <button
+                  type="button"
+                  class="tip-trigger"
+                  aria-label="Explain colourwork leg gauge"
+                  aria-expanded="false"
+                >?</button>
+                <span class="tip-popover tip-right" role="tooltip">
+                  Two-strand colourwork often knits vertically denser than plain stockinette. Enabling this adjusts only the Leg round count without skewing Toe, Foot, or Heel math.
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div id="colorwork-group" class="field-group is-disabled">
+            <label for="colorwork-rows" class="field-label">
+              Colourwork Rows (over <span id="cw-height-mirror">5.0</span> <span class="unit-len">cm</span>)
+            </label>
+            <div class="input-row">
+              <input
+                id="colorwork-rows"
+                class="num-input param-input"
+                type="number"
+                min="4"
+                max="200"
+                step="0.5"
+                value="25.0"
+                disabled
+              />
+              <span class="input-unit">rows</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section">
+          <h2 class="section-heading">03. Sock Dimensions &amp; Ease</h2>
+
+          <div class="field-group">
+            <div class="label-split">
+              <label for="foot-length" class="field-label">Wearer Foot Length</label>
+              <span class="field-meta"><span id="foot-length-readout">25.5</span> <span class="unit-len">cm</span></span>
+            </div>
+            <div class="slider-pair">
+              <input
+                id="foot-length-range"
+                class="range-input param-input"
+                data-sync="foot-length"
+                type="range"
+                min="18.0"
+                max="33.0"
+                step="0.5"
+                value="25.5"
+              />
+              <div class="input-row input-compact">
+                <input
+                  id="foot-length"
+                  class="num-input param-input"
+                  data-sync="foot-length-range"
+                  type="number"
+                  min="10"
+                  max="40"
+                  step="0.1"
+                  value="25.5"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="label-split">
+              <label for="leg-height" class="field-label">Leg Height (Above Heel)</label>
+              <span class="field-meta"><span id="leg-height-readout">14.0</span> <span class="unit-len">cm</span></span>
+            </div>
+            <div class="slider-pair">
+              <input
+                id="leg-height-range"
+                class="range-input param-input"
+                data-sync="leg-height"
+                type="range"
+                min="2.0"
+                max="35.0"
+                step="0.5"
+                value="14.0"
+              />
+              <div class="input-row input-compact">
+                <input
+                  id="leg-height"
+                  class="num-input param-input"
+                  data-sync="leg-height-range"
+                  type="number"
+                  min="1"
+                  max="45"
+                  step="0.1"
+                  value="14.0"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col-inputs">
+            <div class="field-group">
+              <label for="rib-cuff" class="field-label">Ribbed Cuff</label>
+              <div class="input-row">
+                <input
+                  id="rib-cuff"
+                  class="num-input param-input"
+                  type="number"
+                  min="0"
+                  max="15"
+                  step="0.2"
+                  value="4.0"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <div class="label-with-tip">
+                <label for="hem-depth" class="field-label">Hung Hem Depth</label>
+                <span class="tip-anchor">
+                  <button
+                    type="button"
+                    class="tip-trigger"
+                    aria-label="Explain Hung Hem Depth"
+                    aria-expanded="false"
+                  >?</button>
+                  <span class="tip-popover tip-right" role="tooltip">
+                    Folded cuff depth per side. Output shows half + 1 loose turning round + half (e.g. 8+1+8): knit the fold, hang initial loops onto all needles, and latch off.
+                  </span>
+                </span>
+              </div>
+              <div class="input-row">
+                <input
+                  id="hem-depth"
+                  class="num-input param-input"
+                  type="number"
+                    min="0.5"
+                  max="8"
+                  step="0.2"
+                  value="2.0"
+                />
+                <span class="input-unit unit-len">cm</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col-inputs">
+            <div class="field-group">
+              <div class="label-with-tip">
+                <label for="negative-ease" class="field-label">Negative Ease</label>
+                <span class="tip-anchor">
+                  <button
+                    type="button"
+                    class="tip-trigger"
+                    aria-label="Explain Negative Ease"
+                    aria-expanded="false"
+                  >?</button>
+                  <span class="tip-popover" role="tooltip">
+                    Percentage the sock is knitted smaller than the foot so it stretches snugly (10% standard). Higher ease shortens straight Foot rounds and widens the Target Ball-of-Foot range.
+                  </span>
+                </span>
+              </div>
+              <div class="input-row">
+                <input
+                  id="negative-ease"
+                  class="num-input param-input"
+                  type="number"
+                  min="0"
+                  max="25"
+                  step="1"
+                  value="10.0"
+                />
+                <span class="input-unit">%</span>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <div class="label-with-tip">
+                <label for="toe-center-ratio" class="field-label">Toe/Heel Plateau</label>
+                <span class="tip-anchor">
+                  <button
+                    type="button"
+                    class="tip-trigger"
+                    aria-label="Explain Toe/Heel Plateau"
+                    aria-expanded="false"
+                  >?</button>
+                  <span class="tip-popover tip-right" role="tooltip">
+                    Share of half-cylinder needles kept active at the deepest short-row turn (0.35 = 35%). Lower ratios lift more side needles for deeper wedges and fewer straight Foot rounds.
+                  </span>
+                </span>
+              </div>
+              <div class="input-row">
+                <input
+                  id="toe-center-ratio"
+                  class="num-input param-input"
+                  type="number"
+                  min="0.20"
+                  max="0.60"
+                  step="0.05"
+                  value="0.35"
+                />
+                <span class="input-unit">ratio</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="label-with-tip">
+              <label for="target-ball-circ" class="field-label">
+                Wearer Ball-of-Foot Circ <span class="muted-inline">(optional fit check)</span>
+              </label>
+              <span class="tip-anchor">
+                <button
+                  type="button"
+                  class="tip-trigger"
+                  aria-label="Explain Wearer Ball-of-Foot Circumference"
+                  aria-expanded="false"
+                >?</button>
+                <span class="tip-popover" role="tooltip">
+                  Enter the wearer's widest foot circumference to check if this cylinder size yields nominal stretch or recommends sizing up/down before casting on.
+                </span>
+              </span>
+            </div>
+            <div class="input-row">
+              <input
+                id="target-ball-circ"
+                class="num-input param-input"
+                type="number"
+                min="0"
+                max="45"
+                step="0.5"
+                placeholder="Auto"
+              />
+              <span class="input-unit unit-len">cm</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Right Interactive Stage -->
+      <main class="stage">
+        <div id="mpy-loading" class="runtime-banner" role="status">
+          Initializing MicroPython 2026.7.3 pattern engine…
+        </div>
+
+        <!-- Key Engineering Metrics Strip -->
+        <section class="kpi-strip" aria-label="Calculated sock and gauge summary">
+          <div class="kpi-cell">
+            <span class="kpi-label">Relaxed Tube Circ</span>
+            <strong id="metric-circ" class="kpi-value">20.0 cm</strong>
+            <span id="metric-circ-sub" class="kpi-sub">60 needles · 3.00 sts/cm</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Target Ball-of-Foot</span>
+            <strong id="metric-fit-circ" class="kpi-value">22.2 cm</strong>
+            <span id="metric-fit-status" class="kpi-sub fit-nominal">Nominal 10% ease match</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Row Gauge (Plain / Leg)</span>
+            <strong id="metric-gauge" class="kpi-value">4.20 / 4.20</strong>
+            <span id="metric-gauge-sub" class="kpi-sub">rows/cm · plain leg</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Total Machine Rounds</span>
+            <strong id="metric-total-rounds" class="kpi-value">168 rds</strong>
+            <span id="metric-short-row-sub" class="kpi-sub">30 → 12 → 30 short-row split</span>
+          </div>
+        </section>
+
+        <!-- Dual Interactive SVG Visualizers -->
+        <section id="visualizer" class="stage-section">
+          <div class="section-title-row">
+            <div>
+              <h2 class="stage-heading">Live Machine &amp; Sock Schematic</h2>
+              <p id="instruction-summary-line" class="meta-line">
+                60-Slot Cylinder · Toe-Up On-Machine · 1×1 Rib Cuff · Hung Hem
+              </p>
+            </div>
+          </div>
+
+          <div class="phase-toolbar" role="tablist" aria-label="Construction phase selector">
+            <button type="button" class="phase-btn is-active" data-phase="toe" role="tab">1. Short-Row Toe</button>
+            <button type="button" class="phase-btn" data-phase="foot" role="tab">2. Foot Tube</button>
+            <button type="button" class="phase-btn" data-phase="heel" role="tab">3. Short-Row Heel</button>
+            <button type="button" class="phase-btn" data-phase="leg" role="tab">4. Leg Tube</button>
+            <button type="button" class="phase-btn" data-phase="rib" role="tab">5. Ribbed Cuff</button>
+            <button type="button" class="phase-btn" data-phase="hem" role="tab">6. Hung Hem</button>
+          </div>
+
+          <div class="scrub-bar" aria-label="Sock row and pass progress scrubber">
+            <div class="scrub-header">
+              <div class="scrub-title-group">
+                <label for="step-slider" class="scrub-label">Row / Pass Progress</label>
+                <span id="scrub-readout" class="scrub-readout">
+                  Step 20 / 210 · Toe Pass 20/40 · 10 needles in work
+                </span>
+              </div>
+              <div class="scrub-step-btns">
+                <button type="button" id="btn-step-prev" class="btn-ghost" title="Previous pass or round">◀ Step</button>
+                <button type="button" id="btn-step-next" class="btn-ghost" title="Next pass or round">Step ▶</button>
+              </div>
+            </div>
+            <input
+              id="step-slider"
+              class="range-input scrub-slider"
+              type="range"
+              min="1"
+              max="210"
+              step="1"
+              value="20"
+            />
+          </div>
+
+          <div class="viz-grid">
+            <figure class="viz-panel">
+              <figcaption class="viz-caption">
+                <span class="viz-title">2D Side-Profile Sock</span>
+                <span id="sock-zone-caption" class="viz-meta">Click any zone to inspect</span>
+              </figcaption>
+              <div id="sock-svg-stage" class="svg-container"></div>
+            </figure>
+
+            <figure class="viz-panel">
+              <figcaption class="viz-caption">
+                <span class="viz-title">Cylinder Needle Bed</span>
+                <span id="cylinder-zone-caption" class="viz-meta">60 slots · 30 front / 30 back</span>
+              </figcaption>
+              <div id="cylinder-svg-stage" class="svg-container"></div>
+            </figure>
+          </div>
+        </section>
+
+        <!-- Toe-Up 100% On-Machine Instruction Chart -->
+        <section id="instructions" class="stage-section">
+          <div class="section-title-row">
+            <div>
+              <h2 class="stage-heading">Toe-Up On-Machine Instruction Chart</h2>
+              <p class="meta-line">Click a step to highlight its zone and needle engagement above</p>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Phase</th>
+                  <th>Needles in Work</th>
+                  <th class="num-col">Passes / Rds</th>
+                  <th class="num-col">Cumulative</th>
+                  <th>CSM Bench Action</th>
+                </tr>
+              </thead>
+              <tbody id="instruction-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Adult Shoe Size Reference Matrix -->
+        <section id="sizing-chart" class="stage-section">
+          <div class="section-title-row">
+            <div>
+              <h2 class="stage-heading">Adult Shoe-Size Reference Chart</h2>
+              <p id="sizing-subtitle" class="meta-line">Click any size row to load its foot length into the schematic</p>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Shoe Size (EU / NZ-UK / US)</th>
+                  <th class="num-col">Foot (<span class="unit-len">cm</span>)</th>
+                  <th class="num-col">Toe</th>
+                  <th class="num-col">Foot</th>
+                  <th class="num-col">Heel</th>
+                  <th class="num-col">Leg</th>
+                  <th class="num-col">Rib</th>
+                  <th class="num-col">Hem</th>
+                </tr>
+              </thead>
+              <tbody id="sizing-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Bench Sheet Exports & Plain-Text Output -->
+        <section id="exports" class="stage-section">
+          <div class="section-title-row">
+            <div>
+              <h2 class="stage-heading">Bench Sheet Exports</h2>
+              <p class="meta-line">Generated directly from MicroPython for your workshop folder</p>
+            </div>
+            <div class="export-actions">
+              <button type="button" id="btn-export-csv" class="btn-secondary">Download CSV</button>
+              <button type="button" id="btn-export-md" class="btn-secondary">Download Markdown</button>
+              <button type="button" id="btn-copy-md" class="btn-secondary">Copy Bench Text</button>
+            </div>
+          </div>
+          <p id="export-feedback" class="export-feedback" aria-live="polite"></p>
+          <pre id="bench-preview" class="bench-pre"></pre>
+        </section>
+      </main>
+    </div>
+
+    <!-- MicroPython Application Script -->
+    <script type="mpy" src="./sock_planner.py" config="./pyscript.toml"></script>
+  </body>
+</html>

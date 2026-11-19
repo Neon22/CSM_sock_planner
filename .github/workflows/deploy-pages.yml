@@ -1,0 +1,63 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Python modules and PyScript TOML config
+        run: |
+          python3 -B -m py_compile ./sock_math.py ./sock_planner.py
+          python3 -B -c "import tomllib; cfg = tomllib.load(open('./pyscript.toml', 'rb')); assert 'sock_math.py' in cfg.get('files', {})"
+          python3 -B ./sock_math.py > /dev/null
+
+      - name: Assemble GitHub Pages static web app
+        run: |
+          rm -rf _site
+          mkdir -p _site
+          cp index.html _site/index.html
+          cp ./csm_styles.css _site/csm_styles.css
+          cp ./pyscript.toml _site/pyscript.toml
+          cp ./sock_math.py _site/sock_math.py
+          cp ./sock_planner.py _site/sock_planner.py
+          touch _site/.nojekyll
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "_site"
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

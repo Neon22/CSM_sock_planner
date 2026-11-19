@@ -833,6 +833,8 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  line-height: 16px;
+  min-height: 32px;
   padding: 10px 14px;
   background-color: var(--bg-panel);
   border-bottom: 1px solid var(--border-soft);

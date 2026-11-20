@@ -6,16 +6,17 @@
     <title>CSM Sock Planner</title>
     <meta
       name="description"
-      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size bench chart powered by PyScript MicroPython."
+      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size CSM operation chart powered by PyScript MicroPython."
     />
     <meta property="og:title" content="CSM Sock Planner" />
     <meta
       property="og:description"
-      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size bench chart powered by PyScript MicroPython."
+      content="Toe-up circular sock machine pattern calculator, live dual SVG visualizer, and adult shoe-size CSM operation chart powered by PyScript MicroPython."
     />
     <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- Typography: Noto Serif (Display), Inter (UI/Body & Tabular Numerals), Noto Sans Mono (Fixed-Width Bench Sheet) -->
+    <!-- Typography: Noto Serif (Display), Inter (UI/Body & Tabular Numerals), Noto Sans Mono (Fixed-Width CSM Operation Sheet) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -42,7 +43,7 @@
       </nav>
 
       <div class="topbar-actions">
-        <button type="button" id="btn-print" class="btn-primary">Print Bench Sheet</button>
+        <button type="button" id="btn-print" class="btn-primary">Print CSM Operation Sheet</button>
       </div>
     </header>
 
@@ -377,7 +378,40 @@
 
             <div class="field-group">
               <div class="label-with-tip">
-                <label for="toe-center-ratio" class="field-label">Toe/Heel Plateau</label>
+                <label for="deep-heel-extra" class="field-label">Deep Heel</label>
+                <span class="tip-anchor">
+                  <button
+                    type="button"
+                    class="tip-trigger"
+                    aria-label="Explain Deep Heel"
+                    aria-expanded="false"
+                  >?</button>
+                  <span class="tip-popover tip-right" role="tooltip">
+                    Extra needles per side borrowed from the front instep into the heel (0 = standard 50/50 heel). Higher values knit a deeper heel cup that uses more of the foot length and fewer straight Foot rounds.
+                  </span>
+                </span>
+              </div>
+              <div class="input-row">
+                <input
+                  id="deep-heel-extra"
+                  class="num-input param-input"
+                  type="number"
+                  min="0"
+                  max="13"
+                  step="1"
+                  value="0"
+                />
+                <span class="input-unit">+ndls/side</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="label-split">
+              <div class="label-with-tip">
+                <label for="toe-plateau-pct" class="field-label">
+                  Toe/Heel Plateau <span class="muted-inline">(% or min ndls)</span>
+                </label>
                 <span class="tip-anchor">
                   <button
                     type="button"
@@ -386,23 +420,38 @@
                     aria-expanded="false"
                   >?</button>
                   <span class="tip-popover tip-right" role="tooltip">
-                    Share of half-cylinder needles kept active at the deepest short-row turn (0.35 = 35%). Lower ratios lift more side needles for deeper wedges and fewer straight Foot rounds.
+                    Minimum needles kept active at the deepest short-row turn (35% default). Slide the percentage (snaps to legal parity on release) or adjust needles in steps of 2.
                   </span>
                 </span>
               </div>
-              <div class="input-row">
+              <span class="field-meta"><span id="toe-plateau-pct-readout">33.3</span>%</span>
+            </div>
+            <div class="slider-pair">
+              <input
+                id="toe-plateau-pct"
+                class="range-input param-input"
+                type="range"
+                min="6.7"
+                max="93.3"
+                step="0.1"
+                value="33.3"
+                aria-label="Toe/Heel Plateau percentage"
+              />
+              <div class="input-row input-compact">
                 <input
-                  id="toe-center-ratio"
+                  id="toe-plateau-needles"
                   class="num-input param-input"
                   type="number"
-                  min="0.20"
-                  max="0.60"
-                  step="0.05"
-                  value="0.35"
+                  min="2"
+                  max="28"
+                  step="2"
+                  value="10"
+                  aria-label="Toe/Heel Plateau minimum needle count"
                 />
-                <span class="input-unit">ratio</span>
+                <span class="input-unit">ndls</span>
               </div>
             </div>
+            <p id="heel-warning" class="field-note is-hidden"></p>
           </div>
 
           <div class="field-group">
@@ -548,7 +597,7 @@
                   <th>Needles in Work</th>
                   <th class="num-col">Passes / Rds</th>
                   <th class="num-col">Cumulative</th>
-                  <th>CSM Bench Action</th>
+                  <th>CSM Operation Action</th>
                 </tr>
               </thead>
               <tbody id="instruction-tbody"></tbody>
@@ -584,17 +633,17 @@
           </div>
         </section>
 
-        <!-- Bench Sheet Exports & Plain-Text Output -->
+        <!-- CSM Operation Sheet Exports & Plain-Text Output -->
         <section id="exports" class="stage-section">
           <div class="section-title-row">
             <div>
-              <h2 class="stage-heading">Bench Sheet Exports</h2>
+              <h2 class="stage-heading">CSM Operation Sheet Exports</h2>
               <p class="meta-line">Generated directly from MicroPython for your workshop folder</p>
             </div>
             <div class="export-actions">
               <button type="button" id="btn-export-csv" class="btn-secondary">Download CSV</button>
               <button type="button" id="btn-export-md" class="btn-secondary">Download Markdown</button>
-              <button type="button" id="btn-copy-md" class="btn-secondary">Copy Bench Text</button>
+              <button type="button" id="btn-copy-md" class="btn-secondary">Copy CSM Operation Text</button>
             </div>
           </div>
           <p id="export-feedback" class="export-feedback" aria-live="polite"></p>

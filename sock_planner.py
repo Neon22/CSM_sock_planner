@@ -1,3 +1,22 @@
+# PyScript MicroPython DOM controller for the CSM Sock Planner web app.
+
+"""Architecture & Responsibilities:
+- Loaded by `index.html` via `<script type="mpy" src="sock_planner.py" config="pyscript.toml">`.
+- `pyscript.toml` mounts `sock_math.py` so all pure math, timeline resolution,
+  SVG generation, and CSM operation-sheet formatting stay decoupled from DOM calls.
+- All UI-to-DOM updates flow through `render_all()`, which reads the current
+  HTML inputs (`get_params()`), runs `calculate_csm_sock()`, and updates KPIs,
+  the step scrubber, dual SVGs, recipe/sizing tables, and export previews.
+
+MicroPython / PyScript Maintenance Notes:
+- Avoid stacked `@when` decorators on a single function; bind each DOM selector
+  with its own thin handler wrapper.
+- Guard `event.target.closest(...)` with `hasattr(target, "closest")` in case a
+  click originates on a non-Element DOM node.
+- During live `input` events, never overwrite the element the user is currently
+  typing into—defer parity/range snapping to `change` (blur/Enter) or chip clicks.
+"""
+
 from pyscript import document, when, window
 from sock_math import (
     CM_PER_INCH,
@@ -9,24 +28,38 @@ from sock_math import (
     build_sizing_rows,
     build_sock_svg,
     calculate_csm_sock,
+    compute_plateau_needles,
     compute_ribber_requirements,
     from_cm,
     phase_target_step,
+    plateau_bounds,
     resolve_step,
     title,
     to_cm,
     unit_label,
 )
 
+# ---------------------------------------------------------------------------
+# UI State & Safe Input Parsing
+# ---------------------------------------------------------------------------
+
+# In-memory UI state not stored directly in an <input> value:
+# - unit: "metric" (cm) or "imperial" (in); all math converts inputs to cm first.
+# - rib_setup: "1x1", "2x2", "3x1", or "plain" (Mock).
+# - active_phase / current_step: synchronized with the step-scrubber timeline.
+# - plateau_mode: "pct" or "needles" — tracks which Toe/Heel Plateau input was
+#   edited last so cylinder count changes preserve that anchor field.
 state = {
     "unit": "metric",
     "rib_setup": "1x1",
     "active_phase": "toe",
     "current_step": 20,
+    "plateau_mode": "pct",
 }
 
 
 def _read_float(selector, fallback, min_val=0.0):
+    """Read a numeric float input safely without mutating the DOM mid-typing."""
     el = document.querySelector(selector)
     if not el:
         return fallback
@@ -43,6 +76,7 @@ def _read_float(selector, fallback, min_val=0.0):
 
 
 def _read_int(selector, fallback, min_val=24, max_val=120):
+    """Read and clamp an integer input safely (tolerates decimal strings like '60.0')."""
     el = document.querySelector(selector)
     if not el:
         return fallback
@@ -60,10 +94,17 @@ def _read_int(selector, fallback, min_val=24, max_val=120):
         return fallback
 
 
+# ---------------------------------------------------------------------------
+# DOM Parameter Collection & Calculation Bridge
+# ---------------------------------------------------------------------------
+
+
 def get_params():
+    """Collect, validate, and normalize all form inputs into metric (`cm`) params."""
     unit = state["unit"]
     cyl = _read_int("#cylinder-needles", 60, 12, 200)
     warning_el = document.querySelector("#cylinder-warning")
+    # CSM toe/heel short rows require an even cylinder count for a 50/50 split
     if cyl % 2 != 0:
         adj = cyl + 1 if cyl < 200 else cyl - 1
         warning_el.innerText = f"Odd count ({cyl}) adjusted to {adj} for 50/50 instep & heel split."
@@ -86,7 +127,15 @@ def get_params():
     rib_cuff_cm = max(0.0, to_cm(_read_float("#rib-cuff", 4.0, 0.0), unit))
     hem_depth_cm = max(0.2, to_cm(_read_float("#hem-depth", 2.0, 0.2), unit))
     neg_ease = min(30.0, max(0.0, _read_float("#negative-ease", 10.0, 0.0)))
-    toe_ratio = min(0.65, max(0.15, _read_float("#toe-center-ratio", 0.35, 0.15)))
+    deep_heel_extra = _read_int("#deep-heel-extra", 0, 0, 40)
+    min_n, max_n, min_pct, max_pct = plateau_bounds(cyl // 2)
+    plateau_pct = min(max_pct, max(min_pct, _read_float("#toe-plateau-pct", 35.0, 0.1)))
+    toe_ratio = plateau_pct / 100.0
+    plateau_needles = (
+        _read_int("#toe-plateau-needles", min_n, min_n, max_n)
+        if state["plateau_mode"] == "needles"
+        else None
+    )
 
     target_ball_raw = _read_float("#target-ball-circ", 0.0, 0.0)
     target_ball_cm = to_cm(target_ball_raw, unit) if target_ball_raw > 0 else None
@@ -105,11 +154,14 @@ def get_params():
         "hem_depth_cm": hem_depth_cm,
         "negative_ease_pct": neg_ease,
         "toe_center_ratio": toe_ratio,
+        "plateau_needles": plateau_needles,
+        "deep_heel_extra": deep_heel_extra,
         "target_ball_cm": target_ball_cm,
     }
 
 
 def _compute_current(params):
+    """Run `calculate_csm_sock` from a normalized parameter dictionary."""
     return calculate_csm_sock(
         cylinder_needles=params["cylinder_needles"],
         swatch_stitches=params["swatch_stitches"],
@@ -123,10 +175,18 @@ def _compute_current(params):
         hem_depth_cm=params["hem_depth_cm"],
         negative_ease_pct=params["negative_ease_pct"],
         toe_center_ratio=params["toe_center_ratio"],
+        plateau_needles=params.get("plateau_needles"),
+        deep_heel_extra=params.get("deep_heel_extra", 0),
     )
 
 
+# ---------------------------------------------------------------------------
+# Full Stage Render Pipeline
+# ---------------------------------------------------------------------------
+
+
 def render_all():
+    """Recompute the full pattern and refresh every KPI, chart, SVG, and export preview."""
     unit = state["unit"]
     u = unit_label(unit)
     params = get_params()
@@ -221,16 +281,59 @@ def render_all():
     inst_html, total_rounds = build_instruction_rows(params, res, unit, state["rib_setup"], state["active_phase"])
     document.querySelector("#instruction-tbody").innerHTML = inst_html
     document.querySelector("#metric-total-rounds").innerText = f"{total_rounds} rds"
-    document.querySelector("#metric-short-row-sub").innerText = (
-        f"{res['half_needles']} → {res['center_needles']} → {res['half_needles']} short-row split"
-    )
+    if res["deep_heel_extra"] > 0:
+        document.querySelector("#metric-short-row-sub").innerText = (
+            f"Toe {res['half_needles']}→{res['center_needles']} · "
+            f"Heel {res['heel_work_needles']}→{res['center_needles']} (+{res['deep_heel_extra']}/s)"
+        )
+    else:
+        document.querySelector("#metric-short-row-sub").innerText = (
+            f"{res['half_needles']} → {res['center_needles']} → {res['half_needles']} short-row split"
+        )
 
+    deep_summary = f" · Deep Heel +{res['deep_heel_extra']}/s" if res["deep_heel_extra"] > 0 else ""
     document.querySelector("#instruction-summary-line").innerText = (
         f"{params['cylinder_needles']}-Needle Cylinder · "
         f"{rib_info['short_spec']} ({state['rib_setup']}) · "
         f"{from_cm(params['swatch_width_cm'], unit):.1f} × {from_cm(params['swatch_height_cm'], unit):.1f} {u} Swatch · "
-        f"{params['negative_ease_pct']:.0f}% Ease"
+        f"{params['negative_ease_pct']:.0f}% Ease{deep_summary}"
     )
+
+    deep_el = document.querySelector("#deep-heel-extra")
+    if deep_el:
+        deep_el.max = str(res["max_deep_heel_extra"])
+
+    min_n, max_n, min_pct, max_pct = plateau_bounds(res["half_needles"])
+    ndls_el = document.querySelector("#toe-plateau-needles")
+    if ndls_el:
+        ndls_el.min = str(min_n)
+        ndls_el.max = str(max_n)
+        ndls_el.step = "2"
+    pct_el = document.querySelector("#toe-plateau-pct")
+    if pct_el:
+        pct_el.min = f"{min_pct:.1f}"
+        pct_el.max = f"{max_pct:.1f}"
+        pct_el.step = "0.1"
+    pct_readout = document.querySelector("#toe-plateau-pct-readout")
+    if pct_readout:
+        pct_readout.innerText = _format_pct(res["plateau_pct"])
+
+    heel_warn = document.querySelector("#heel-warning")
+    if heel_warn:
+        notes = []
+        if params.get("deep_heel_extra", 0) > res["max_deep_heel_extra"]:
+            notes.append(
+                f"Deep Heel capped at +{res['max_deep_heel_extra']}/side to keep at least 4 instep needles held."
+            )
+        if res["foot_overflow"]:
+            notes.append(
+                "Toe + Deep Heel length exceeds eased foot length; straight Foot rounds reduced to 0."
+            )
+        if notes:
+            heel_warn.innerText = " ".join(notes)
+            heel_warn.classList.remove("is-hidden")
+        else:
+            heel_warn.classList.add("is-hidden")
 
     document.querySelector("#foot-length-readout").innerText = f"{_read_float('#foot-length', 25.5):.1f}"
     document.querySelector("#leg-height-readout").innerText = f"{_read_float('#leg-height', 14.0):.1f}"
@@ -272,7 +375,13 @@ def render_all():
     )
 
 
+# ---------------------------------------------------------------------------
+# Unit Conversion & Bidirectional Plateau Sync
+# ---------------------------------------------------------------------------
+
+
 def _update_unit_labels():
+    """Sync unit suffix labels ('cm'/'in') and Metric/Imperial toggle buttons."""
     u = unit_label(state["unit"])
     for el in document.querySelectorAll(".unit-len"):
         el.innerText = u
@@ -284,6 +393,7 @@ def _update_unit_labels():
 
 
 def _convert_all_dimension_inputs(to_unit):
+    """Convert all length inputs and slider bounds when switching between cm and inches."""
     if state["unit"] == to_unit:
         return
     factor = (1.0 / CM_PER_INCH) if to_unit == "imperial" else CM_PER_INCH
@@ -317,8 +427,66 @@ def _convert_all_dimension_inputs(to_unit):
     _update_unit_labels()
 
 
+def _format_pct(pct_val):
+    """Format plateau percentages cleanly without trailing '.0' on whole numbers."""
+    rounded = round(pct_val, 1)
+    if abs(rounded - round(rounded)) < 0.05:
+        return str(int(round(rounded)))
+    return f"{rounded:.1f}"
+
+
+def _sync_plateau_pair(source, snap_active=False):
+    """Keep Toe/Heel Plateau % slider and min-needle count synchronized.
+
+    Updates the legal `min`/`max`/`step` attributes for the active cylinder
+    first. During live dragging/typing (`snap_active=False`), updates only the
+    sibling control and readout; on release/commit (`snap_active=True`), also
+    snaps the active slider or needle input to the exact legal parity value.
+    """
+    cyl = _read_int("#cylinder-needles", 60, 12, 200)
+    if cyl % 2 != 0:
+        cyl = cyl + 1 if cyl < 200 else cyl - 1
+    half = cyl // 2
+    min_n, max_n, min_pct, max_pct = plateau_bounds(half)
+    pct_el = document.querySelector("#toe-plateau-pct")
+    ndl_el = document.querySelector("#toe-plateau-needles")
+    readout_el = document.querySelector("#toe-plateau-pct-readout")
+    if not pct_el or not ndl_el:
+        return
+
+    ndl_el.min = str(min_n)
+    ndl_el.max = str(max_n)
+    ndl_el.step = "2"
+    pct_el.min = f"{min_pct:.1f}"
+    pct_el.max = f"{max_pct:.1f}"
+    pct_el.step = "0.1"
+
+    if source == "needles":
+        raw_n = _read_int("#toe-plateau-needles", min_n, min_n, max_n)
+        center_n, actual_pct = compute_plateau_needles(half, plateau_needles=raw_n)
+        pct_el.value = f"{actual_pct:.1f}"
+        if snap_active:
+            ndl_el.value = str(center_n)
+    else:
+        pct_val = min(max_pct, max(min_pct, _read_float("#toe-plateau-pct", 35.0, 0.1)))
+        center_n, actual_pct = compute_plateau_needles(half, plateau_pct=pct_val)
+        ndl_el.value = str(center_n)
+        if snap_active:
+            pct_el.value = f"{actual_pct:.1f}"
+
+    if readout_el:
+        readout_el.innerText = _format_pct(actual_pct)
+
+
+# ---------------------------------------------------------------------------
+# Interactive Event Bindings (@when)
+# ---------------------------------------------------------------------------
+
+
 def _handle_param_event(event):
+    """Central dispatcher for `.param-input` `input` and `change` events."""
     target = event.target
+    # Mirror paired range sliders and number boxes linked via `data-sync`
     sync_id = target.getAttribute("data-sync")
     if sync_id:
         partner = document.querySelector(f"#{sync_id}")
@@ -334,6 +502,14 @@ def _handle_param_event(event):
         else:
             cw_input.disabled = True
             cw_group.classList.add("is-disabled")
+    elif target.id == "toe-plateau-pct":
+        state["plateau_mode"] = "pct"
+        _sync_plateau_pair("pct", snap_active=(getattr(event, "type", "") == "change"))
+    elif target.id == "toe-plateau-needles":
+        state["plateau_mode"] = "needles"
+        _sync_plateau_pair("needles", snap_active=(getattr(event, "type", "") == "change"))
+    elif target.id == "cylinder-needles":
+        _sync_plateau_pair(state["plateau_mode"], snap_active=True)
 
     render_all()
 
@@ -365,6 +541,7 @@ def on_cyl_click(event):
     if not btn:
         return
     document.querySelector("#cylinder-needles").value = btn.getAttribute("data-cyl")
+    _sync_plateau_pair(state["plateau_mode"], snap_active=True)
     render_all()
 
 
@@ -398,6 +575,7 @@ def on_rib_click(event):
 
 
 def _jump_to_phase(phase_name):
+    """Move the step scrubber to the midpoint of `phase_name` and re-render."""
     res = _compute_current(get_params())
     state["active_phase"] = phase_name
     state["current_step"] = phase_target_step(res, phase_name)
@@ -414,6 +592,7 @@ def on_phase_btn_click(event):
 
 
 def _select_phase_from_target(target):
+    """Delegate click events inside SVG zones or recipe rows carrying `data-phase`."""
     hit = target.closest("[data-phase]") if hasattr(target, "closest") else None
     if not hit:
         return
@@ -456,6 +635,7 @@ def on_step_next(event):
 
 @when("click", "#sizing-tbody")
 def on_sizing_row_click(event):
+    """Snap Foot Length when the user clicks a row in the Adult Sizing Chart."""
     target = event.target
     row = target.closest("[data-foot-cm]") if hasattr(target, "closest") else None
     if not row:
@@ -467,7 +647,13 @@ def on_sizing_row_click(event):
     render_all()
 
 
+# ---------------------------------------------------------------------------
+# Presets, Exports, Print & Tooltip Popovers
+# ---------------------------------------------------------------------------
+
+
 def _apply_preset(cyl, sts, sw_w, rows, sw_h, use_cw, cw_rows):
+    """Load a metric cylinder/swatch preset and reset dimensions to baseline defaults."""
     if state["unit"] != "metric":
         _convert_all_dimension_inputs("metric")
     document.querySelector("#cylinder-needles").value = str(cyl)
@@ -494,7 +680,14 @@ def _apply_preset(cyl, sts, sw_w, rows, sw_h, use_cw, cw_rows):
     document.querySelector("#rib-cuff").value = "4.0"
     document.querySelector("#hem-depth").value = "2.0"
     document.querySelector("#negative-ease").value = "10.0"
-    document.querySelector("#toe-center-ratio").value = "0.35"
+    document.querySelector("#deep-heel-extra").value = "0"
+    state["plateau_mode"] = "pct"
+    pct_el = document.querySelector("#toe-plateau-pct")
+    if pct_el:
+        pct_el.min = "2.0"
+        pct_el.max = "98.0"
+        pct_el.value = "35.0"
+    _sync_plateau_pair("pct", snap_active=True)
     document.querySelector("#target-ball-circ").value = ""
     render_all()
 
@@ -515,6 +708,7 @@ def on_preset_72(event):
 
 
 def _download_text(filename, mime_type, content):
+    """Trigger a client-side file download via an inline `data:` URI."""
     link = document.createElement("a")
     encoded = window.encodeURIComponent(content)
     link.setAttribute("href", f"data:{mime_type};charset=utf-8,{encoded}")
@@ -542,7 +736,7 @@ def on_export_md(event):
     res = _compute_current(params)
     _, chart_rows = build_sizing_rows(params, unit)
     md_text = build_markdown_bench_sheet(params, res, chart_rows, unit, state["rib_setup"])
-    fname = f"csm_{params['cylinder_needles']}_bench_sheet.md"
+    fname = f"csm_{params['cylinder_needles']}_operation_sheet.md"
     _download_text(fname, "text/markdown", md_text)
     document.querySelector("#export-feedback").innerText = f"Downloaded {fname}"
 
@@ -551,7 +745,7 @@ def on_export_md(event):
 def on_copy_text(event):
     txt = document.querySelector("#bench-preview").innerText
     window.navigator.clipboard.writeText(txt)
-    document.querySelector("#export-feedback").innerText = "Copied bench chart to clipboard."
+    document.querySelector("#export-feedback").innerText = "Copied CSM operation sheet to clipboard."
 
 
 @when("click", "#btn-print")
@@ -560,6 +754,7 @@ def on_print_click(event):
 
 
 def _close_all_tooltips():
+    """Collapse any open `?` parameter explanation popovers."""
     for anchor in document.querySelectorAll(".tip-anchor.is-open"):
         anchor.classList.remove("is-open")
         btn = anchor.querySelector(".tip-trigger")
@@ -569,6 +764,7 @@ def _close_all_tooltips():
 
 @when("click", ".tip-trigger")
 def on_tip_trigger_click(event):
+    """Toggle the clicked `?` popover while closing any other open popovers."""
     event.stopPropagation()
     target = event.target
     anchor = target.closest(".tip-anchor") if hasattr(target, "closest") else None
@@ -595,8 +791,13 @@ def on_keydown_close_tips(event):
         _close_all_tooltips()
 
 
-# Initial boot render & hide MicroPython loading notice
+# ---------------------------------------------------------------------------
+# Initial Boot Render
+# ---------------------------------------------------------------------------
+
 loading_banner = document.querySelector("#mpy-loading")
 if loading_banner:
     loading_banner.classList.add("is-hidden")
+_sync_plateau_pair("pct", snap_active=True)
 render_all()
+

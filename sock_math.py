@@ -1,11 +1,7 @@
-"""Pure MicroPython calculation, step-timeline, SVG diagram, and bench-sheet
-export utilities for toe-up Circular Sock Machine (CSM) pattern planning.
+# Pure MicroPython calculation, step-timeline, SVG diagram, and CSM operation-sheet
+# export utilities for toe-up Circular Sock Machine (CSM) pattern planning.
 
-Design constraints for MicroPython (PyScript 2026.7.3):
-- Zero browser/DOM imports so this module can run and be unit-tested standalone.
-- Avoid `str.title()`, `str.ljust()`, `str.rjust()`, and PEP 604 `X | Y` union
-  type annotations, which are unsupported in the MicroPython runtime.
-"""
+# Author Neon22 Nov 2026
 
 import math
 
@@ -129,6 +125,50 @@ def compute_ribber_requirements(cylinder_needles, rib_setup):
 # ---------------------------------------------------------------------------
 
 
+def plateau_bounds(half_needles):
+    """Return `(min_needles, max_needles, min_pct, max_pct)` for symmetric plateau.
+
+    Legal plateau needle counts share the same parity as `half_needles` (so
+    they always increment/decrement in steps of 2) and leave at least one
+    short-row lift per side when `half_needles >= 4`.
+    """
+    half = max(2, int(half_needles))
+    min_n = 2 if (half % 2 == 0) else 3
+    max_n = (half - 2) if half >= 4 else half
+    if max_n < min_n:
+        max_n = min_n
+    min_pct = (min_n / float(half)) * 100.0
+    max_pct = (max_n / float(half)) * 100.0
+    return min_n, max_n, min_pct, max_pct
+
+
+def compute_plateau_needles(half_needles, plateau_pct=35.0, plateau_needles=None):
+    """Resolve minimum active plateau needles & actual percentage with parity snap.
+
+    Because short-row shaping lifts one needle per side symmetrically,
+    `(half_needles - center_needles)` must be even, meaning valid needle
+    counts step in increments of 2 starting from `min_n` (`2` for even half,
+    `3` for odd half). Either a percentage or an explicit needle count can
+    drive the result, snapping to the nearest legal parity value.
+    """
+    half = max(2, int(half_needles))
+    min_n, max_n, _, _ = plateau_bounds(half)
+    if plateau_needles is not None:
+        target = float(plateau_needles)
+    else:
+        target = half * (plateau_pct / 100.0)
+
+    k = round((target - min_n) / 2.0)
+    center = min_n + (2 * k)
+    if center < min_n:
+        center = min_n
+    if center > max_n:
+        center = max_n
+
+    actual_pct = (center / float(half)) * 100.0
+    return center, actual_pct
+
+
 def calculate_csm_sock(
     cylinder_needles,
     swatch_stitches,
@@ -142,6 +182,8 @@ def calculate_csm_sock(
     hem_depth_cm=2.0,
     negative_ease_pct=10.0,
     toe_center_ratio=0.35,
+    plateau_needles=None,
+    deep_heel_extra=0,
 ):
     """Calculates exact CSM row/pass counts from swatch gauge and cylinder count.
 
@@ -149,6 +191,22 @@ def calculate_csm_sock(
     `colorwork_rows_in_swatch` is provided, leg rounds are computed using the
     separate stranded-colourwork vertical gauge while keeping plain gauge for
     toe, foot, heel, rib, and hung hem.
+
+    Plateau control:
+    - By default `toe_center_ratio` (0.35 = 35%) determines the minimum active
+      center plateau needles via `compute_plateau_needles`.
+    - Passing an explicit `plateau_needles` integer overrides `toe_center_ratio`
+      so callers driven by a direct needle count avoid float rounding drift.
+
+    Deep heel control:
+    - `deep_heel_extra` (default 0) specifies extra needles per side borrowed
+      from the front instep into the heel (`heel_work_needles = half_needles +
+      2 * deep_heel_extra`, capped to always leave >= 4 instep needles held).
+    - Because `heel_work_needles` widens while `center_needles` stays fixed,
+      `heel_lift_per_side` and `heel_passes` increase by `deep_extra` and
+      `4 * deep_extra` respectively, consuming more of `target_foot_cm` and
+      reducing straight `foot_rows` accordingly (`foot_overflow` flags when
+      toe + deep heel exceed `target_foot_cm`).
     """
     # Stitch & vertical row densities per cm
     st_per_cm = swatch_stitches / swatch_width_cm
@@ -162,29 +220,31 @@ def calculate_csm_sock(
     # Target knitted foot length after lengthwise negative ease so the sock hugs the foot
     target_foot_cm = foot_length_cm * (1.0 - negative_ease_pct / 100.0)
 
-    # Half-cylinder short-row math (scales automatically for 48, 54, 60, 64, 72, 84, etc.).
-    # Toe and heel are worked on half the cylinder; outer needles lift symmetrically inward
-    # until `center_needles` remain, so `(half_needles - center_needles)` must be even.
+    # Half-cylinder short-row toe math (scales automatically for any even cylinder count)
     half_needles = cylinder_needles // 2
-    center_needles = round(half_needles * toe_center_ratio)
-    if center_needles < 2:
-        center_needles = 2
-    if center_needles > half_needles:
-        center_needles = half_needles
-    if (half_needles - center_needles) % 2 != 0:
-        if center_needles + 1 <= half_needles:
-            center_needles += 1
-        else:
-            center_needles -= 1
+    center_needles, actual_plateau_pct = compute_plateau_needles(
+        half_needles, toe_center_ratio * 100.0, plateau_needles
+    )
 
-    needles_lifted_each_side = max(0, (half_needles - center_needles) // 2)
+    toe_lift_per_side = max(0, (half_needles - center_needles) // 2)
     # 1 pass per lifted needle on the way down (both sides = 2 * lift_per_side),
     # mirrored on the way back up (* 2). Two half-cylinder passes equal 1 full row height.
-    toe_or_heel_passes = (needles_lifted_each_side * 2) * 2
-    toe_or_heel_length_cm = (toe_or_heel_passes / 2.0) / plain_rows_per_cm
+    toe_passes = (toe_lift_per_side * 2) * 2
+    toe_length_cm = (toe_passes / 2.0) / plain_rows_per_cm
+
+    # Deep heel: borrow `deep_extra` needles per side from the front instep into heel work
+    max_deep_extra = max(0, (half_needles - 4) // 2)
+    deep_extra = max(0, min(max_deep_extra, int(deep_heel_extra)))
+    heel_work_needles = half_needles + (2 * deep_extra)
+    heel_held_needles = cylinder_needles - heel_work_needles
+    heel_lift_per_side = max(0, (heel_work_needles - center_needles) // 2)
+    heel_passes = (heel_lift_per_side * 2) * 2
+    heel_length_cm = (heel_passes / 2.0) / plain_rows_per_cm
 
     # Straight foot rounds fill the remaining target foot length between toe and heel wedges
-    straight_foot_cm = max(0.0, target_foot_cm - (2.0 * toe_or_heel_length_cm))
+    raw_straight_cm = target_foot_cm - toe_length_cm - heel_length_cm
+    foot_overflow = raw_straight_cm < 0.0
+    straight_foot_cm = max(0.0, raw_straight_cm)
     foot_rows = round(straight_foot_cm * plain_rows_per_cm)
 
     # Leg (plain or colourwork), ribbed cuff, and hung hem ({h} outer + 1 loose + {h} inner)
@@ -201,16 +261,25 @@ def calculate_csm_sock(
         "plain_rows_per_cm": plain_rows_per_cm,
         "leg_rows_per_cm": leg_rows_per_cm,
         "target_foot_cm": target_foot_cm,
-        "toe_length_cm": toe_or_heel_length_cm,
+        "toe_length_cm": toe_length_cm,
+        "heel_length_cm": heel_length_cm,
         "straight_foot_cm": straight_foot_cm,
+        "foot_overflow": foot_overflow,
         "relaxed_circ_cm": round(relaxed_circ_cm, 1),
         "recommended_foot_circ_cm": round(relaxed_circ_cm / ease_factor, 1),
         "half_needles": half_needles,
         "center_needles": center_needles,
-        "lift_per_side": needles_lifted_each_side,
-        "toe_passes": toe_or_heel_passes,
+        "plateau_pct": round(actual_plateau_pct, 1),
+        "lift_per_side": toe_lift_per_side,
+        "toe_lift_per_side": toe_lift_per_side,
+        "heel_lift_per_side": heel_lift_per_side,
+        "deep_heel_extra": deep_extra,
+        "max_deep_heel_extra": max_deep_extra,
+        "heel_work_needles": heel_work_needles,
+        "heel_held_needles": heel_held_needles,
+        "toe_passes": toe_passes,
         "foot_rows": foot_rows,
-        "heel_passes": toe_or_heel_passes,
+        "heel_passes": heel_passes,
         "leg_rows": leg_rows,
         "rib_rows": rib_rows,
         "hem_half_rows": hem_half_rows,
@@ -226,12 +295,13 @@ def resolve_step(res, requested_step):
     """Map a 1-based global step (pass or round) across all sock phases.
 
     Returns active phase metadata, normalized progress within that phase,
-    and left/right lifted needle counts so both the 2D sock profile cursor
-    and the cylinder needle-bed diagram stay synchronized.
+    `in_work` / `held_needles` counts, and left/right lifted needle counts so
+    both the 2D sock profile cursor and the cylinder needle-bed diagram stay
+    synchronized—including asymmetric Deep Heel passes (`heel_work_needles`
+    active vs. `heel_held_needles` on the front instep).
     """
     half = res["half_needles"]
     center = res["center_needles"]
-    lift = res["lift_per_side"]
     hem_h = res["hem_half_rows"]
 
     # Build contiguous step intervals for each non-zero phase in knit order
@@ -277,13 +347,23 @@ def resolve_step(res, requested_step):
     left_lifted = 0
     right_lifted = 0
     in_work = half
+    held_needles = half
     subphase = ""
     hem_stage = ""
 
     if active_phase in ("toe", "heel"):
+        if active_phase == "heel":
+            phase_work = res["heel_work_needles"]
+            phase_lift = res["heel_lift_per_side"]
+            held_needles = res["heel_held_needles"]
+        else:
+            phase_work = half
+            phase_lift = res["toe_lift_per_side"]
+            held_needles = half
+
         # First half of passes lifts one needle per pass (alternating left/right);
         # second half returns one parked needle per pass back into work.
-        mid = 2 * lift
+        mid = 2 * phase_lift
         if phase_step <= mid:
             subphase = "Decrease"
             lifted_total = phase_step
@@ -292,7 +372,7 @@ def resolve_step(res, requested_step):
             lifted_total = max(0, phase_total - phase_step)
         left_lifted = (lifted_total + 1) // 2
         right_lifted = lifted_total // 2
-        in_work = max(center, half - left_lifted - right_lifted)
+        in_work = max(center, phase_work - left_lifted - right_lifted)
     elif active_phase == "hem":
         # Hung hem sequence: {h} outer rounds -> 1 loose turning round -> {h} inner rounds
         if phase_step <= hem_h:
@@ -314,6 +394,7 @@ def resolve_step(res, requested_step):
         "left_lifted": left_lifted,
         "right_lifted": right_lifted,
         "in_work": in_work,
+        "held_needles": held_needles,
         "hem_stage": hem_stage,
     }
 
@@ -334,7 +415,12 @@ def phase_target_step(res, phase_name):
 
 
 def build_sock_svg(params, res, step_info, unit, rib_setup):
-    """Render the interactive 2D toe-up sock side-profile schematic SVG and caption."""
+    """Render the interactive 2D toe-up sock side-profile schematic SVG and caption.
+
+    Toe and heel widths scale independently from `toe_length_cm` and
+    `heel_length_cm`, so increasing Deep Heel depth visibly widens the heel
+    wedge into the foot while shortening the straight foot section.
+    """
     phase = step_info["phase"]
     p_prog = step_info["phase_progress"]
     phase_order = ["toe", "foot", "heel", "leg", "rib", "hem"]
@@ -344,7 +430,7 @@ def build_sock_svg(params, res, step_info, unit, rib_setup):
     # Clamp minimum physical dimensions so extreme inputs keep readable SVG zones
     toe_cm = max(2.2, res["toe_length_cm"])
     straight_cm = max(2.0, res["straight_foot_cm"])
-    heel_cm = max(2.2, res["toe_length_cm"])
+    heel_cm = max(2.2, res["heel_length_cm"])
     leg_cm = max(3.0, params["leg_height_cm"])
     rib_cm = max(1.0, params["rib_cuff_cm"])
     hem_cm = max(0.8, params["hem_depth_cm"])
@@ -564,7 +650,7 @@ def build_sock_svg(params, res, step_info, unit, rib_setup):
 
         <line x1="{x_heel_back + 4:.1f}" y1="{y_instep + tube_h / 2:.1f}" x2="{x_heel_back + 22:.1f}" y2="{y_instep + tube_h / 2:.1f}" stroke="#94a3b8" stroke-width="1"/>
         <text x="{x_heel_back + 26:.1f}" y="{y_instep + tube_h / 2 + 4:.1f}" fill="#0369a1">
-          Heel: {res['heel_passes']} passes ({res['half_needles']}→{res['center_needles']}→{res['half_needles']})
+          Heel: {res['heel_passes']}p ({res['heel_work_needles']}→{res['center_needles']}→{res['heel_work_needles']}){f" · Deep +{res['deep_heel_extra']}/s" if res['deep_heel_extra'] > 0 else ""}
         </text>
 
         <text x="{(x_toe_tip + x_toe_end) / 2:.1f}" y="{y_instep - 10:.1f}" text-anchor="middle" fill="#0369a1">
@@ -586,10 +672,13 @@ def build_cylinder_svg(params, res, step_info, rib_setup):
 
     Angular layout places slots `0 .. half-1` across the upper semicircle
     (Back Half / Heel) and `half .. n-1` across the lower semicircle
-    (Front Half / Instep & Toe).
+    (Front Half / Instep & Toe). Deep heels wrap `deep_heel_extra` needles
+    per side from the front instep into the heel working arc.
     """
     n = params["cylinder_needles"]
     half = res["half_needles"]
+    extra = res["deep_heel_extra"]
+    heel_work = res["heel_work_needles"]
     phase = step_info["phase"]
     p_step = step_info["phase_step"]
     p_total = step_info["phase_total"]
@@ -606,6 +695,7 @@ def build_cylinder_svg(params, res, step_info, rib_setup):
     left_lifted = step_info["left_lifted"]
     right_lifted = step_info["right_lifted"]
     in_work = step_info["in_work"]
+    held_needles = step_info["held_needles"]
     lifted_total = left_lifted + right_lifted
 
     needles_svg = []
@@ -642,9 +732,11 @@ def build_cylinder_svg(params, res, step_info, rib_setup):
                 stroke_w = 1.4
                 opacity = "0.55"
         elif phase == "heel":
-            # Short-row heel works on the Back Half (`0..half-1`); Front Half stays held
-            if i < half:
-                if i < left_lifted or i >= (half - right_lifted):
+            # Short-row heel works on Back Half + `extra` side needles borrowed from Front Half
+            in_heel_arc = (i < half + extra) or (i >= n - extra)
+            if in_heel_arc:
+                pos = (i - (n - extra)) if i >= (n - extra) else (i + extra)
+                if pos < left_lifted or pos >= (heel_work - right_lifted):
                     stroke_col = "#d97706"
                     stroke_w = 2.3
                 else:
@@ -695,16 +787,18 @@ def build_cylinder_svg(params, res, step_info, rib_setup):
 
     if phase in ("toe", "heel"):
         pass_dir = "Pass →" if p_step % 2 == 1 else "← Pass"
-        center_title = f"{phase.upper()} · {step_info['subphase'].upper()}"
+        deep_tag = " (DEEP)" if (phase == "heel" and extra > 0) else ""
+        center_title = f"{phase.upper()}{deep_tag} · {step_info['subphase'].upper()}"
         center_sub1 = f"{in_work} knitting · {lifted_total} lifted"
         center_sub2 = f"Pass {p_step}/{p_total} ({pass_dir})"
+        held_lbl = "Held Instep" if (phase == "heel" and extra > 0) else "Held Half"
         legend_html = (
             '<circle cx="42" cy="336" r="4" fill="#0284c7"/>'
             '<text x="51" y="340" font-size="10.5" fill="#334155">Active (' + str(in_work) + ')</text>'
             '<circle cx="136" cy="336" r="4" fill="#d97706"/>'
             '<text x="145" y="340" font-size="10.5" fill="#334155">Parked (' + str(lifted_total) + ')</text>'
             '<circle cx="228" cy="336" r="4" fill="#cbd5e1"/>'
-            '<text x="237" y="340" font-size="10.5" fill="#64748b">Held Half (' + str(half) + ')</text>'
+            '<text x="237" y="340" font-size="10.5" fill="#64748b">' + held_lbl + ' (' + str(held_needles) + ')</text>'
         )
     elif phase == "rib":
         center_title = f"RIBBED CUFF ({rib_setup.upper()})"
@@ -781,7 +875,7 @@ def build_cylinder_svg(params, res, step_info, rib_setup):
 
 
 # ---------------------------------------------------------------------------
-# HTML Table & Bench-Sheet Export Formatters
+# HTML Table & CSM Operation-Sheet Export Formatters
 # ---------------------------------------------------------------------------
 
 
@@ -790,7 +884,11 @@ def build_instruction_rows(params, res, unit, rib_setup, active_phase):
     n = params["cylinder_needles"]
     half = res["half_needles"]
     center = res["center_needles"]
-    lift = res["lift_per_side"]
+    toe_lift = res["toe_lift_per_side"]
+    heel_lift = res["heel_lift_per_side"]
+    heel_work = res["heel_work_needles"]
+    heel_held = res["heel_held_needles"]
+    deep_extra = res["deep_heel_extra"]
     hem_h = res["hem_half_rows"]
     u = unit_label(unit)
     rib_info = compute_ribber_requirements(n, rib_setup)
@@ -802,6 +900,12 @@ def build_instruction_rows(params, res, unit, rib_setup, active_phase):
         rib_needles_txt = f"{n} cyl + {rib_info['short_spec']}"
         rib_action_txt = f"Requires {rib_info['headline']}: {rib_info['detail']}"
 
+    heel_split_label = f"deep +{deep_extra}/side" if deep_extra > 0 else "back half"
+    heel_action_txt = (
+        f"Park front {heel_held} instep needles; lift {heel_lift} needles/side to "
+        f"{center} center, then return to {heel_work}."
+    )
+
     rows_data = [
         (
             "toe",
@@ -809,7 +913,7 @@ def build_instruction_rows(params, res, unit, rib_setup, active_phase):
             f"{half} → {center} → {half} (front half)",
             f"{res['toe_passes']} passes",
             res["toe_passes"] // 2,
-            f"Hang waste yarn & bonnet; lift {lift} needles/side to {center} center, then return to {half}.",
+            f"Hang waste yarn & bonnet; lift {toe_lift} needles/side to {center} center, then return to {half}.",
         ),
         (
             "foot",
@@ -821,11 +925,11 @@ def build_instruction_rows(params, res, unit, rib_setup, active_phase):
         ),
         (
             "heel",
-            "3. Short-Row Heel",
-            f"{half} → {center} → {half} (back half)",
+            "3. Short-Row Heel" + (" (Deep)" if deep_extra > 0 else ""),
+            f"{heel_work} → {center} → {heel_work} ({heel_split_label})",
             f"{res['heel_passes']} passes",
             res["heel_passes"] // 2,
-            f"Park front {half} needles; lift {lift} needles/side to {center} center, then return to {half}.",
+            heel_action_txt,
         ),
         (
             "leg",
@@ -890,6 +994,8 @@ def build_sizing_rows(params, unit):
             hem_depth_cm=params["hem_depth_cm"],
             negative_ease_pct=params["negative_ease_pct"],
             toe_center_ratio=params["toe_center_ratio"],
+            plateau_needles=params.get("plateau_needles"),
+            deep_heel_extra=params.get("deep_heel_extra", 0),
         )
         hem_str = f"{r['hem_half_rows']}+1+{r['hem_half_rows']}"
         is_match = abs(foot_cm - active_foot_cm) < 0.26
@@ -913,7 +1019,7 @@ def build_sizing_rows(params, unit):
 
 
 def build_plaintext_bench_sheet(params, res, chart_rows, unit, rib_setup="1x1"):
-    """Format fixed-width monospace bench sheet (uses f-string padding for MicroPython)."""
+    """Format fixed-width monospace CSM operation sheet (uses f-string padding for MicroPython)."""
     u = unit_label(unit)
     sw_w = from_cm(params["swatch_width_cm"], unit)
     sw_h = from_cm(params["swatch_height_cm"], unit)
@@ -922,15 +1028,23 @@ def build_plaintext_bench_sheet(params, res, chart_rows, unit, rib_setup="1x1"):
     rib_info = compute_ribber_requirements(params["cylinder_needles"], rib_setup)
 
     lines = [
-        f"=== CSM BENCH CHART: {params['cylinder_needles']}-NEEDLE CYLINDER ===",
+        f"=== CSM OPERATION SHEET: {params['cylinder_needles']}-NEEDLE CYLINDER ===",
         f"Swatch: {params['swatch_stitches']:.1f} sts / {sw_w:.1f} {u} | {params['swatch_rows']:.1f} rows / {sw_h:.1f} {u}",
     ]
     if params["use_colorwork"]:
         lines.append(f"Leg Colourwork Gauge: {params['colorwork_rows']:.1f} rows / {sw_h:.1f} {u}")
     foot_hdr = f"Foot({u})"
+    heel_line = (
+        f"Short-Row Heel (Deep +{res['deep_heel_extra']}/side): "
+        f"{res['heel_work_needles']} -> {res['center_needles']} -> {res['heel_work_needles']} needles "
+        f"({res['heel_lift_per_side']} lifted/side = {res['heel_passes']} passes)"
+        if res["deep_heel_extra"] > 0
+        else f"Short-Row Heel: {res['half_needles']} -> {res['center_needles']} -> {res['half_needles']} needles ({res['heel_lift_per_side']} lifted/side = {res['heel_passes']} passes)"
+    )
     lines.extend([
         f"Relaxed Tube Circ: {rel_c:.1f} {u} (Fits ~{rec_c:.1f} {u} ball-of-foot at {params['negative_ease_pct']:.0f}% negative ease)",
-        f"Short-Row Toe/Heel: {res['half_needles']} -> {res['center_needles']} -> {res['half_needles']} needles ({res['lift_per_side']} lifted/side = {res['toe_passes']} passes)",
+        f"Short-Row Toe: {res['half_needles']} -> {res['center_needles']} -> {res['half_needles']} needles ({res['toe_lift_per_side']} lifted/side = {res['toe_passes']} passes, {res['plateau_pct']:.0f}% plateau)",
+        heel_line,
         f"Cuff Ribber ({rib_setup}): {rib_info['headline']} — {rib_info['detail']}",
         "",
         f"{'Shoe Size':<36} | {foot_hdr:<8} | {'Toe':<4} | {'Foot':<4} | {'Heel':<4} | {'Leg':<4} | {'Rib':<4} | {'Hem':<9}",
@@ -959,15 +1073,23 @@ def build_csv_bench_sheet(chart_rows, unit):
 
 
 def build_markdown_bench_sheet(params, res, chart_rows, unit, rib_setup="1x1"):
-    """Format a Markdown workshop reference sheet with gauge summary and sizing table."""
+    """Format a Markdown workshop CSM operation sheet with gauge summary and sizing table."""
     u = unit_label(unit)
     rib_info = compute_ribber_requirements(params["cylinder_needles"], rib_setup)
+    heel_md = (
+        f"- **Short-Row Heel (Deep +{res['deep_heel_extra']}/side)**: "
+        f"`{res['heel_work_needles']} -> {res['center_needles']} -> {res['heel_work_needles']}` "
+        f"({res['heel_lift_per_side']} lifted/side = {res['heel_passes']} passes)"
+        if res["deep_heel_extra"] > 0
+        else f"- **Short-Row Heel**: `{res['half_needles']} -> {res['center_needles']} -> {res['half_needles']}` ({res['heel_lift_per_side']} lifted/side = {res['heel_passes']} passes)"
+    )
     md = [
-        f"# CSM Bench Chart — {params['cylinder_needles']}-Needle Cylinder",
+        f"# CSM Operation Sheet — {params['cylinder_needles']}-Needle Cylinder",
         "",
         f"- **Swatch**: {params['swatch_stitches']:.1f} sts / {from_cm(params['swatch_width_cm'], unit):.1f} {u} · {params['swatch_rows']:.1f} rows / {from_cm(params['swatch_height_cm'], unit):.1f} {u}",
         f"- **Relaxed Tube Circumference**: {from_cm(res['relaxed_circ_cm'], unit):.1f} {u} (Fits ~{from_cm(res['recommended_foot_circ_cm'], unit):.1f} {u} ball-of-foot at {params['negative_ease_pct']:.0f}% negative ease)",
-        f"- **Short-Row Toe/Heel**: `{res['half_needles']} -> {res['center_needles']} -> {res['half_needles']}` ({res['lift_per_side']} lifted/side = {res['toe_passes']} passes)",
+        f"- **Short-Row Toe**: `{res['half_needles']} -> {res['center_needles']} -> {res['half_needles']}` ({res['toe_lift_per_side']} lifted/side = {res['toe_passes']} passes, {res['plateau_pct']:.0f}% plateau)",
+        heel_md,
         f"- **Cuff Ribber ({rib_setup})**: {rib_info['headline']} — {rib_info['detail']}",
         "",
         f"| Shoe Size | Foot ({u}) | Toe | Foot | Heel | Leg | Rib | Hem |",
@@ -999,6 +1121,8 @@ if __name__ == "__main__":
         "hem_depth_cm": 2.0,
         "negative_ease_pct": 10.0,
         "toe_center_ratio": 0.35,
+        "plateau_needles": None,
+        "deep_heel_extra": 2,
     }
 
     # 1. Ribber slot requirements for the cylinder & cuff style
@@ -1006,7 +1130,7 @@ if __name__ == "__main__":
     print("=== 1. RIBBER REQUIREMENTS ===")
     print(f"Pattern: {sample_rib} | Required: {rib_req['headline']} | {rib_req['detail']}\n")
 
-    # 2. Core sock pattern calculations
+    # 2. Core sock pattern calculations (including Deep Heel & Plateau options)
     res = calculate_csm_sock(
         cylinder_needles=sample_params["cylinder_needles"],
         swatch_stitches=sample_params["swatch_stitches"],
@@ -1020,6 +1144,8 @@ if __name__ == "__main__":
         hem_depth_cm=sample_params["hem_depth_cm"],
         negative_ease_pct=sample_params["negative_ease_pct"],
         toe_center_ratio=sample_params["toe_center_ratio"],
+        plateau_needles=sample_params["plateau_needles"],
+        deep_heel_extra=sample_params["deep_heel_extra"],
     )
     print("=== 2. CALCULATE_CSM_SOCK OUTPUT ===")
     for key in (
@@ -1027,10 +1153,16 @@ if __name__ == "__main__":
         "recommended_foot_circ_cm",
         "half_needles",
         "center_needles",
-        "lift_per_side",
+        "plateau_pct",
+        "toe_lift_per_side",
         "toe_passes",
-        "foot_rows",
+        "deep_heel_extra",
+        "heel_work_needles",
+        "heel_held_needles",
+        "heel_lift_per_side",
         "heel_passes",
+        "foot_rows",
+        "foot_overflow",
         "leg_rows",
         "rib_rows",
         "hem_half_rows",
@@ -1046,20 +1178,21 @@ if __name__ == "__main__":
 
     print("=== 3. TIMELINE & SVG SCHEMATICS ===")
     print(f"Heel midpoint step : {step_info['step']} / {step_info['total_steps']} ({step_info['subphase']})")
-    print(f"Needle state       : {step_info['in_work']} knitting, {step_info['left_lifted']}L + {step_info['right_lifted']}R lifted")
+    print(f"Needle state       : {step_info['in_work']} knitting, {step_info['left_lifted']}L + {step_info['right_lifted']}R lifted, {step_info['held_needles']} held")
     print(f"Sock SVG           : {len(sock_svg)} chars | {sock_caption}")
     print(f"Cylinder SVG       : {len(cyl_svg)} chars | {cyl_caption}\n")
 
-    # 4. Instruction table, adult sizing chart & bench sheet exports
+    # 4. Instruction table, adult sizing chart & CSM operation sheet exports
     inst_html, total_rounds = build_instruction_rows(sample_params, res, sample_unit, sample_rib, step_info["phase"])
     sizing_html, chart_rows = build_sizing_rows(sample_params, sample_unit)
     bench_txt = build_plaintext_bench_sheet(sample_params, res, chart_rows, sample_unit, sample_rib)
     bench_csv = build_csv_bench_sheet(chart_rows, sample_unit)
     bench_md = build_markdown_bench_sheet(sample_params, res, chart_rows, sample_unit, sample_rib)
 
-    print("=== 4. TABLES & BENCH SHEET EXPORTS ===")
+    print("=== 4. TABLES & CSM OPERATION SHEET EXPORTS ===")
     print(f"Recipe cumulative rounds : {total_rounds} rds ({len(inst_html)} HTML chars)")
     print(f"Sizing rows generated    : {len(chart_rows)} sizes ({len(sizing_html)} HTML chars)")
     print(f"CSV / Markdown lengths   : {len(bench_csv)} / {len(bench_md)} chars\n")
     print(bench_txt)
+
 

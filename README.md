@@ -1,11 +1,20 @@
 ## Sock Designer for a CSM
 
-Build a single page web app for a basic csm sock design (using pyscript):
- - design a simple sock designed to be knitted on a csm in one pass with only the final tail to be sewn in.
- - Using short rows for the heel, toe
- - Optionally ribbing of 1x1, 2x2, 3x3, mock
- - Can set needle cylinder count for various densities
- - Can check dimensions against approximated standard sizing.
-Starts at Toe - works its way up to the top of the sock with only the tail needing to be sewn in.
+A single-page web app (built with PyScript) that generates custom, toe-up sock patterns for a Circular Sock Machine (CSM).
 
-Webpage is live here: https://neon22.github.io/CSM_sock_planner/
+Designed for continuous, one-pass knitting with short-row toes and heels, leaving only the final tail to weave in.
+
+🔗 Webpage is live here: https://neon22.github.io/CSM_sock_planner/
+
+### Key Features
+
+- Toe-Up Construction: Generates patterns starting at the toe and finishing at the cuff, supporting 1x1, 2x2, 3x3, mock rib, or no ribbing.
+- Custom Sizing & Gauges:
+  - Supports metric and imperial measurements (with conversion),
+  - custom cylinder needle counts,
+  - adjustable negative ease percentages
+  - a separate gauge swatch for colorworked legs.
+- Heel & Toe Shaping: Uses a configurable ratio or needle count to set minimum needles at the toe and heel points.
+- Deep Heel: Allows depth to be set and automatically balances deep-heel row adjustments evenly between the foot and leg lengths.
+- Interactive checking: Includes a row-by-row visualiser and built-in sanity checks (e.g. ball-of-foot sizing against standard charts).
+- Printable Output: Has printable shortcut summary for easy reference at the machine.

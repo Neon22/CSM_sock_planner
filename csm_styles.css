@@ -765,8 +765,8 @@ a:focus-visible {
   flex-direction: column;
   gap: 8px;
   padding: 10px 14px;
-  background-color: var(--bg-panel);
-  border: 1px solid var(--border-hairline);
+  background-color: #ecfff2;
+  border: 1px solid #86efac;
   border-radius: var(--radius-md);
 }
 
@@ -795,8 +795,8 @@ a:focus-visible {
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent-cobalt-hover);
-  font-weight: 500;
+  color: #065f46;
+  font-weight: 600;
 }
 
 .scrub-step-btns {
@@ -805,9 +805,19 @@ a:focus-visible {
   gap: 6px;
 }
 
+.scrub-step-btns .btn-ghost {
+  border-color: #86efac;
+}
+
+.scrub-step-btns .btn-ghost:hover {
+  background-color: #f0fdf4;
+  border-color: var(--accent-emerald);
+}
+
 .scrub-slider {
   width: 100%;
   margin: 0;
+  accent-color: var(--accent-emerald);
 }
 
 /* Dual SVG Visualizers */

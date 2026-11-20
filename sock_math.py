@@ -203,10 +203,12 @@ def calculate_csm_sock(
       from the front instep into the heel (`heel_work_needles = half_needles +
       2 * deep_heel_extra`, capped to always leave >= 4 instep needles held).
     - Because `heel_work_needles` widens while `center_needles` stays fixed,
-      `heel_lift_per_side` and `heel_passes` increase by `deep_extra` and
-      `4 * deep_extra` respectively, consuming more of `target_foot_cm` and
-      reducing straight `foot_rows` accordingly (`foot_overflow` flags when
-      toe + deep heel exceed `target_foot_cm`).
+      `heel_lift_per_side` increases by `deep_extra`, adding `4 * deep_extra`
+      extra passes (`2 * deep_extra` extra full row heights) to the heel.
+    - Half of those extra rows (`deep_extra` rows = `extra_heel_cm / 2`) are
+      deducted from straight `foot_rows`, and the other half (`deep_extra`
+      rows = `extra_heel_cm / 2`) are deducted from `leg_rows` because the
+      deeper heel cup extends equally into both the foot and the leg.
     """
     # Stitch & vertical row densities per cm
     st_per_cm = swatch_stitches / swatch_width_cm
@@ -232,7 +234,10 @@ def calculate_csm_sock(
     toe_passes = (toe_lift_per_side * 2) * 2
     toe_length_cm = (toe_passes / 2.0) / plain_rows_per_cm
 
-    # Deep heel: borrow `deep_extra` needles per side from the front instep into heel work
+    # Standard 50/50 heel baseline vs Deep Heel (extra needles/side borrowed from instep)
+    base_heel_passes = toe_passes
+    base_heel_length_cm = (base_heel_passes / 2.0) / plain_rows_per_cm
+
     max_deep_extra = max(0, (half_needles - 4) // 2)
     deep_extra = max(0, min(max_deep_extra, int(deep_heel_extra)))
     heel_work_needles = half_needles + (2 * deep_extra)
@@ -241,14 +246,24 @@ def calculate_csm_sock(
     heel_passes = (heel_lift_per_side * 2) * 2
     heel_length_cm = (heel_passes / 2.0) / plain_rows_per_cm
 
+    # Deep heel adds 2 * deep_extra full rows (4 * deep_extra passes):
+    # half of the extra rows come off the foot, and half come off the leg.
+    extra_heel_cm = max(0.0, heel_length_cm - base_heel_length_cm)
+    half_extra_cm = extra_heel_cm / 2.0
+    heel_foot_cm = base_heel_length_cm + half_extra_cm
+    heel_leg_cm = half_extra_cm
+
     # Straight foot rounds fill the remaining target foot length between toe and heel wedges
-    raw_straight_cm = target_foot_cm - toe_length_cm - heel_length_cm
+    raw_straight_cm = target_foot_cm - toe_length_cm - heel_foot_cm
     foot_overflow = raw_straight_cm < 0.0
     straight_foot_cm = max(0.0, raw_straight_cm)
     foot_rows = round(straight_foot_cm * plain_rows_per_cm)
 
-    # Leg (plain or colourwork), ribbed cuff, and hung hem ({h} outer + 1 loose + {h} inner)
-    leg_rows = round(leg_height_cm * leg_rows_per_cm)
+    # Straight leg rounds above the heel (reduced by the upper half of any deep heel)
+    raw_leg_cm = leg_height_cm - heel_leg_cm
+    leg_overflow = raw_leg_cm < 0.0
+    straight_leg_cm = max(0.0, raw_leg_cm)
+    leg_rows = round(straight_leg_cm * leg_rows_per_cm)
     rib_rows = round(rib_cuff_cm * plain_rows_per_cm)
     hem_half_rows = round(hem_depth_cm * plain_rows_per_cm)
 
@@ -263,8 +278,12 @@ def calculate_csm_sock(
         "target_foot_cm": target_foot_cm,
         "toe_length_cm": toe_length_cm,
         "heel_length_cm": heel_length_cm,
+        "heel_foot_cm": heel_foot_cm,
+        "heel_leg_cm": heel_leg_cm,
         "straight_foot_cm": straight_foot_cm,
+        "straight_leg_cm": straight_leg_cm,
         "foot_overflow": foot_overflow,
+        "leg_overflow": leg_overflow,
         "relaxed_circ_cm": round(relaxed_circ_cm, 1),
         "recommended_foot_circ_cm": round(relaxed_circ_cm / ease_factor, 1),
         "half_needles": half_needles,
@@ -275,6 +294,7 @@ def calculate_csm_sock(
         "heel_lift_per_side": heel_lift_per_side,
         "deep_heel_extra": deep_extra,
         "max_deep_heel_extra": max_deep_extra,
+        "extra_heel_rows": deep_extra * 2,
         "heel_work_needles": heel_work_needles,
         "heel_held_needles": heel_held_needles,
         "toe_passes": toe_passes,
@@ -417,9 +437,9 @@ def phase_target_step(res, phase_name):
 def build_sock_svg(params, res, step_info, unit, rib_setup):
     """Render the interactive 2D toe-up sock side-profile schematic SVG and caption.
 
-    Toe and heel widths scale independently from `toe_length_cm` and
-    `heel_length_cm`, so increasing Deep Heel depth visibly widens the heel
-    wedge into the foot while shortening the straight foot section.
+    Toe and heel foot-side widths scale from `toe_length_cm` and
+    `heel_foot_cm`, while `straight_leg_cm` reflects leg height remaining
+    above the deep heel cup.
     """
     phase = step_info["phase"]
     p_prog = step_info["phase_progress"]
@@ -430,8 +450,8 @@ def build_sock_svg(params, res, step_info, unit, rib_setup):
     # Clamp minimum physical dimensions so extreme inputs keep readable SVG zones
     toe_cm = max(2.2, res["toe_length_cm"])
     straight_cm = max(2.0, res["straight_foot_cm"])
-    heel_cm = max(2.2, res["heel_length_cm"])
-    leg_cm = max(3.0, params["leg_height_cm"])
+    heel_cm = max(2.2, res["heel_foot_cm"])
+    leg_cm = max(2.0, res["straight_leg_cm"])
     rib_cm = max(1.0, params["rib_cuff_cm"])
     hem_cm = max(0.8, params["hem_depth_cm"])
 
@@ -557,7 +577,7 @@ def build_sock_svg(params, res, step_info, unit, rib_setup):
     heel_corner_y = y_instep
 
     foot_disp = from_cm(params["foot_length_cm"], unit)
-    leg_disp = from_cm(params["leg_height_cm"], unit)
+    leg_disp = from_cm(res["straight_leg_cm"], unit)
     rib_disp = from_cm(params["rib_cuff_cm"], unit)
     hem_disp = from_cm(params["hem_depth_cm"], unit)
 
@@ -937,7 +957,11 @@ def build_instruction_rows(params, res, unit, rib_setup, active_phase):
             f"All {n} cylinder needles",
             f"{res['leg_rows']} rounds",
             res["leg_rows"],
-            "Knit leg using stranded colourwork gauge." if params["use_colorwork"] else "Knit plain tube in the round to cuff start.",
+            (
+                f"Knit leg ({from_cm(res['straight_leg_cm'], unit):.1f} {u}) using stranded colourwork gauge."
+                if params["use_colorwork"]
+                else f"Knit plain tube ({from_cm(res['straight_leg_cm'], unit):.1f} {u}) in the round to cuff start."
+            ),
         ),
         (
             "rib",

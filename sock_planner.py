@@ -327,7 +327,11 @@ def render_all():
             )
         if res["foot_overflow"]:
             notes.append(
-                "Toe + Deep Heel length exceeds eased foot length; straight Foot rounds reduced to 0."
+                "Toe + Deep Heel foot half exceeds eased foot length; straight Foot rounds reduced to 0."
+            )
+        if res.get("leg_overflow"):
+            notes.append(
+                "Deep Heel leg half exceeds Leg Height; straight Leg rounds reduced to 0."
             )
         if notes:
             heel_warn.innerText = " ".join(notes)

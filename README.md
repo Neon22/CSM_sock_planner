@@ -18,3 +18,6 @@ Designed for continuous, one-pass knitting with short-row toes and heels, leavin
 - Deep Heel: Allows depth to be set and automatically balances deep-heel row adjustments evenly between the foot and leg lengths.
 - Interactive checking: Includes a row-by-row visualiser and built-in sanity checks (e.g. ball-of-foot sizing against standard charts).
 - Printable Output: Has printable shortcut summary for easy reference at the machine.
+
+#### Note:
+Because its in python the math module can simply be run locally to do any calculations.
